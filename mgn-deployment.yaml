@@ -1,60 +1,108 @@
-# mgn-install-and-cleanup.yaml
-schemaVersion: '2.2'
-description: 'Install MGN Agent and remove SSM Agent'
+schemaVersion: "2.2"
+description: "Install AWS MGN Agent using assumed role credentials"
 parameters:
   Region:
     type: String
-    default: 'us-east-1'
-    description: 'AWS Region for MGN'
+    default: "us-west-2"
+    description: "AWS Region for MGN"
+  MGNRoleArn:
+    type: String
+    default: "arn:aws:iam::103891662525:role/MGN-Agent"
+    description: "ARN of the MGN-Agent role to assume"
 mainSteps:
   - action: aws:runPowerShellScript
     name: InstallMGNAgent
     inputs:
       runCommand:
         - |
+          $ErrorActionPreference = "Stop"
           $region = "{{ Region }}"
-          $tempPath = "C:\MGN-Bootstrap"
+          $mgnRoleArn = "{{ MGNRoleArn }}"
+          $tempPath = "C:\MGN-Install"
           
-          New-Item -ItemType Directory -Path $tempPath -Force | Out-Null
-          
-          # Download MGN Agent
-          $mgnUrl = "https://aws-application-migration-service-$region.s3.$region.amazonaws.com/latest/windows/AwsReplicationWindowsInstaller.exe"
-          Invoke-WebRequest -Uri $mgnUrl -OutFile "$tempPath\AwsReplicationWindowsInstaller.exe"
-          
-          # Install MGN Agent
-          & "$tempPath\AwsReplicationWindowsInstaller.exe" --region $region --no-prompt
-          
-          # Wait and verify
-          Start-Sleep -Seconds 30
-          $mgnService = Get-Service -Name "AWS Replication Agent"
-          if ($mgnService.Status -ne "Running") {
-              throw "MGN Agent installation failed"
+          try {
+              # Create temp directory
+              if (Test-Path $tempPath) {
+                  Remove-Item -Path $tempPath -Recurse -Force
+              }
+              New-Item -ItemType Directory -Path $tempPath -Force | Out-Null
+              
+              # Install AWS Tools for PowerShell if needed
+              Write-Host "=== Checking AWS PowerShell Module ==="
+              if (-not (Get-Module -ListAvailable -Name AWS.Tools.SecurityToken)) {
+                  Write-Host "Installing AWS.Tools.SecurityToken module..."
+                  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                  Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers | Out-Null
+                  Install-Module -Name AWS.Tools.Common -Force -Scope AllUsers -AllowClobber
+                  Install-Module -Name AWS.Tools.SecurityToken -Force -Scope AllUsers -AllowClobber
+              }
+              
+              Import-Module AWS.Tools.SecurityToken
+              
+              Write-Host "=== Verifying SSM Credentials ==="
+              $identity = Get-STSCallerIdentity -Region $region
+              Write-Host "Current Identity: $($identity.Arn)"
+              
+              Write-Host "=== Assuming MGN-Agent Role ==="
+              $assumedRole = Use-STSRole `
+                  -RoleArn $mgnRoleArn `
+                  -RoleSessionName "MGN-Install-$env:COMPUTERNAME" `
+                  -DurationInSeconds 3600 `
+                  -Region $region
+              
+              if (-not $assumedRole.Credentials) {
+                  throw "Failed to assume MGN-Agent role"
+              }
+              
+              $accessKey = $assumedRole.Credentials.AccessKeyId
+              $secretKey = $assumedRole.Credentials.SecretAccessKey
+              $sessionToken = $assumedRole.Credentials.SessionToken
+              
+              Write-Host "Successfully assumed MGN-Agent role"
+              Write-Host "Credentials expire: $($assumedRole.Credentials.Expiration)"
+              
+              Write-Host "=== Downloading MGN Agent ==="
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+              $mgnUrl = "https://aws-application-migration-service-$region.s3.$region.amazonaws.com/latest/windows/AwsReplicationWindowsInstaller.exe"
+              
+              Invoke-WebRequest -Uri $mgnUrl -OutFile "$tempPath\AwsReplicationWindowsInstaller.exe"
+              
+              if (-not (Test-Path "$tempPath\AwsReplicationWindowsInstaller.exe")) {
+                  throw "Failed to download MGN installer"
+              }
+              
+              $installerSize = (Get-Item "$tempPath\AwsReplicationWindowsInstaller.exe").Length
+              Write-Host "Installer downloaded: $([math]::Round($installerSize/1MB, 2)) MB"
+              
+              Write-Host "=== Installing MGN Agent ==="
+              $installArgs = "--region $region --aws-access-key-id $accessKey --aws-secret-access-key $secretKey --aws-session-token $sessionToken --no-prompt"
+              
+              $process = Start-Process -FilePath "$tempPath\AwsReplicationWindowsInstaller.exe" `
+                  -ArgumentList $installArgs `
+                  -Wait -PassThru -NoNewWindow
+              
+              Write-Host "Installer Exit Code: $($process.ExitCode)"
+              
+              if ($process.ExitCode -ne 0) {
+                  throw "MGN Agent installation failed with exit code: $($process.ExitCode)"
+              }
+              
+              Write-Host "=== Waiting for Service to Start ==="
+              Start-Sleep -Seconds 30
+              
+              $mgnService = Get-Service -Name "AwsReplicationService" -ErrorAction Stop
+              
+              if ($mgnService.Status -eq "Running") {
+                  Write-Host "=== SUCCESS: MGN Agent Installed and Running ==="
+              } else {
+                  throw "MGN Agent service is not running. Status: $($mgnService.Status)"
+              }
+              
+          } catch {
+              Write-Error "Installation failed: $_"
+              exit 1
+          } finally {
+              # Secure cleanup
+              Remove-Variable -Name accessKey, secretKey, sessionToken, assumedRole -ErrorAction SilentlyContinue
+              Remove-Item -Path $tempPath -Recurse -Force -ErrorAction SilentlyContinue
           }
-          
-          Write-Host "MGN Agent installed successfully"
-
-  - action: aws:runPowerShellScript
-    name: RemoveSSMAgent
-    inputs:
-      runCommand:
-        - |
-          # Final verification of MGN
-          $mgnService = Get-Service -Name "AWS Replication Agent"
-          if ($mgnService.Status -ne "Running") {
-              throw "MGN Agent not running - keeping SSM Agent"
-          }
-          
-          # Uninstall SSM Agent
-          Stop-Service -Name "AmazonSSMAgent" -Force -ErrorAction SilentlyContinue
-          
-          $uninstaller = "C:\Program Files\Amazon\SSM\Uninstall.exe"
-          if (Test-Path $uninstaller) {
-              Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait
-          }
-          
-          # Cleanup
-          Remove-Item -Path "C:\Program Files\Amazon\SSM" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "C:\ProgramData\Amazon\SSM" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "C:\MGN-Bootstrap" -Recurse -Force -ErrorAction SilentlyContinue
-          
-          Write-Host "SSM Agent removed - MGN Agent continuing independently"

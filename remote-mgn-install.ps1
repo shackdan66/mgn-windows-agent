@@ -52,12 +52,32 @@ $scriptBlock = {
 
     # Wait for SSM agent to register
     Write-Host "Waiting for SSM Agent to register..." -ForegroundColor Yellow
-    Start-Sleep -Seconds 30
+    Start-Sleep -Seconds 60
 
     # Verify SSM agent is running
     $ssmService = Get-Service -Name "AmazonSSMAgent" -ErrorAction SilentlyContinue
+    if (-not $ssmService) {
+        throw "SSM Agent service not found. Installation may have failed."
+    }
+
     if ($ssmService.Status -ne "Running") {
-        throw "SSM Agent failed to start"
+        Write-Host "SSM Agent status: $($ssmService.Status)" -ForegroundColor Red
+        Write-Host "Checking service startup logs..." -ForegroundColor Yellow
+        
+        # Try to start the service manually
+        try {
+            Start-Service -Name "AmazonSSMAgent" -ErrorAction Stop
+            Start-Sleep -Seconds 10
+            $ssmService.Refresh()
+            if ($ssmService.Status -eq "Running") {
+                Write-Host "SSM Agent started successfully after manual start" -ForegroundColor Green
+            } else {
+                throw "SSM Agent failed to start even after manual attempt"
+            }
+        } catch {
+            Write-Host "Failed to start SSM Agent manually: $($_.Exception.Message)" -ForegroundColor Red
+            throw "SSM Agent installation or activation failed. Check activation parameters and network connectivity."
+        }
     }
 
     Write-Host "SSM Agent installed and registered successfully" -ForegroundColor Green
