@@ -1,0 +1,60 @@
+# mgn-install-and-cleanup.yaml
+schemaVersion: '2.2'
+description: 'Install MGN Agent and remove SSM Agent'
+parameters:
+  Region:
+    type: String
+    default: 'us-east-1'
+    description: 'AWS Region for MGN'
+mainSteps:
+  - action: aws:runPowerShellScript
+    name: InstallMGNAgent
+    inputs:
+      runCommand:
+        - |
+          $region = "{{ Region }}"
+          $tempPath = "C:\MGN-Bootstrap"
+          
+          New-Item -ItemType Directory -Path $tempPath -Force | Out-Null
+          
+          # Download MGN Agent
+          $mgnUrl = "https://aws-application-migration-service-$region.s3.$region.amazonaws.com/latest/windows/AwsReplicationWindowsInstaller.exe"
+          Invoke-WebRequest -Uri $mgnUrl -OutFile "$tempPath\AwsReplicationWindowsInstaller.exe"
+          
+          # Install MGN Agent
+          & "$tempPath\AwsReplicationWindowsInstaller.exe" --region $region --no-prompt
+          
+          # Wait and verify
+          Start-Sleep -Seconds 30
+          $mgnService = Get-Service -Name "AWS Replication Agent"
+          if ($mgnService.Status -ne "Running") {
+              throw "MGN Agent installation failed"
+          }
+          
+          Write-Host "MGN Agent installed successfully"
+
+  - action: aws:runPowerShellScript
+    name: RemoveSSMAgent
+    inputs:
+      runCommand:
+        - |
+          # Final verification of MGN
+          $mgnService = Get-Service -Name "AWS Replication Agent"
+          if ($mgnService.Status -ne "Running") {
+              throw "MGN Agent not running - keeping SSM Agent"
+          }
+          
+          # Uninstall SSM Agent
+          Stop-Service -Name "AmazonSSMAgent" -Force -ErrorAction SilentlyContinue
+          
+          $uninstaller = "C:\Program Files\Amazon\SSM\Uninstall.exe"
+          if (Test-Path $uninstaller) {
+              Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait
+          }
+          
+          # Cleanup
+          Remove-Item -Path "C:\Program Files\Amazon\SSM" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\ProgramData\Amazon\SSM" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\MGN-Bootstrap" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "SSM Agent removed - MGN Agent continuing independently"
