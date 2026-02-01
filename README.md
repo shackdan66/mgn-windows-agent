@@ -165,7 +165,7 @@ aws ssm create-activation \
     --iam-role "SSM-Hybrid-Agent" \
     --registration-limit 100 \
     --expiration-date $(date -v+7d +'%Y-%m-%dT%H:%M:%S') \
-    --region us-west-2
+    --region [region]
 ```
 
 ## Install SSM via bootstrap-ssm.ps1 on local Windows computer or remotely via remote-ssm-install.ps1
