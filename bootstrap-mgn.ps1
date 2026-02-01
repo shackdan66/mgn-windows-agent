@@ -119,3 +119,6 @@ Write-Host "3. The cleanup script will remove SSM Agent after MGN is installed"
 # Cleanup and return to original directory
 Pop-Location
 Remove-Item -Path $tempPath -Recurse -Force -ErrorAction SilentlyContinue 
+
+
+VRT-RDS-00B-WAT 
