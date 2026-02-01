@@ -1,4 +1,4 @@
-# bootstrap-mgn.ps1
+# bootstrap-ssm.ps1
 # Run this on the source server to be migrated
 
 param(

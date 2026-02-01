@@ -1,4 +1,4 @@
-# remote-mgn-install.ps1
+# remote-ssm-install.ps1
 # Installs AWS MGN Agent remotely on one or more Windows servers using WinRM
 
 param(

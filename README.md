@@ -134,17 +134,12 @@ Create an IAM Role with the following policy Named "MGN-Agent"
                 "mgn:GetAgentReplicationInfoForMgn"
             ],
             "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": "sts:AssumeRole",
-            "Resource": "arn:aws:iam::[accnt_number]:role/MGN-Agent"
         }
     ]
 }
 ```
 
-**SSM-Hybrid-Agent Trust Policy:**
+**MGN-Agent Trust Policy:**
 ```
 {
     "Version": "2012-10-17",
@@ -173,9 +168,11 @@ aws ssm create-activation \
     --region us-west-2
 ```
 
-## Install MGN via bootstrap-mgn.ps1 on local Windows computer or remotely via remote-mgn-install.ps1
+## Install SSM via bootstrap-ssm.ps1 on local Windows computer or remotely via remote-ssm-install.ps1
 
 ```
  .\remote-ssm-install.ps1 -ComputerName session1.domain1.lab,broker1.domain1.lab,broker2.domain1.lab -ActivationCode [ActivationCode] -ActivationId [ActiveationID] -Region [region]
 
 ```
+
+## Once SSM is deploy the mgn-deployment.yaml SSM document can be used to push the MGN Agent to one or more SSM Hybrid computers
